@@ -1,31 +1,23 @@
 description = [[
-Crawls webservers in search of RFI vulnerabilities.
-It tests every form field it finds and
-every parameter of a URL containing a query.
 ]]
 
 ---
 -- @usage
--- nmap --script http-rfi-spider -p80 <host>
+-- nmap --script http-exif-spider -p80 <host>
 --
 --
 -- @output
 --
--- @args http-rfi-spider.inclusionurl the url we will try to include, defaults
---       to <code>http://www.yahoo.com/search?p=rfi</code>
---
 
-author = "Piotr Olma"
+author = "Ron Bowes"
 license = "Same as Nmap--See http://nmap.org/book/man-legal.html"
 categories = {"intrusive"}
 
 local shortport = require 'shortport'
 local http = require 'http'
 local stdnse = require 'stdnse'
-local url = require 'url'
 local httpspider = require 'httpspider'
 local string = require 'string'
-local table = require 'table'
 local nsedebug = require 'nsedebug'
 local bin = require 'bin'
 
@@ -101,13 +93,11 @@ TAG_USERCOMMENT            = 0x9286
 TAG_SUBSEC_TIME            = 0x9290
 TAG_SUBSEC_TIME_ORIG       = 0x9291
 TAG_SUBSEC_TIME_DIG        = 0x9292
-
 TAG_WINXP_TITLE            = 0x9c9b
 TAG_WINXP_COMMENT          = 0x9c9c
 TAG_WINXP_AUTHOR           = 0x9c9d
 TAG_WINXP_KEYWORDS         = 0x9c9e
 TAG_WINXP_SUBJECT          = 0x9c9f
-
 TAG_FLASH_PIX_VERSION      = 0xA000
 TAG_COLOR_SPACE            = 0xA001
 TAG_PIXEL_X_DIMENSION      = 0xA002
@@ -311,9 +301,46 @@ GpsTagTable[GPS_TAG_AREAINFORMATION] = "AreaInformation"
 GpsTagTable[GPS_TAG_DATESTAMP]       = "Datestamp"
 GpsTagTable[GPS_TAG_DIFFERENTIAL]    = "Differential"
 
+FMT_BYTE      =  1
+FMT_STRING    =  2
+FMT_USHORT    =  3
+FMT_ULONG     =  4
+FMT_URATIONAL =  5
+FMT_SBYTE     =  6
+FMT_UNDEFINED =  7
+FMT_SSHORT    =  8
+FMT_SLONG     =  9
+FMT_SRATIONAL = 10
+FMT_SINGLE    = 11
+FMT_DOUBLE    = 12
+
 bytes_per_format = {0,1,1,2,4,8,1,1,2,4,8,4,8}
 
 portrule = shortport.http
+
+function decode_value(endian, format, data, pos)
+  local value, value2
+  if(format == FMT_SBYTE or format == FMT_BYTE) then
+    pos, value = bin.unpack(endian .. "C", data, pos)
+    return pos, value
+  elseif(format == FMT_USHORT) then
+    pos, value = bin.unpack(endian .. "S", data, pos)
+    return pos, value
+  elseif(format == FMT_ULONG or format == FMT_SLONG) then
+    pos, value = bin.unpack(endian .. "I", data, pos)
+    return pos, value
+  elseif(format == FMT_SSHORT) then
+    pos, value = bin.unpack(endian .. "S", data, pos)
+    return pos, value
+  elseif(format == FMT_URATIONAL or format == FMT_SRATIONAL) then
+    pos, value, value2 = bin.unpack(endian .. "II", data, pos)
+    return pos, value / value2
+  elseif(format == FMT_SINGLE or format == FMT_DOUBLE) then
+    -- TODO
+    stdnse.print_debug(1, "Not supported!")
+    os.exit()
+  end
+end
 
 function process_gps(data, pos, endian)
   local value, offset
@@ -336,12 +363,9 @@ function process_gps(data, pos, endian)
 
     if(tag == GPS_TAG_LATITUDE or tag == GPS_TAG_LONGITUDE) then
       local dummy_pos, p1, p2, p3, p1_top, p1_bottom, p2_top, p2_bottom, p3_top, p3_bottom
-      dummy_pos, p1_top, p1_bottom = bin.unpack(endian .. "II", data, value + 8)
-      dummy_pos, p2_top, p2_bottom = bin.unpack(endian .. "II", data, dummy_pos)
-      dummy_pos, p3_top, p3_bottom = bin.unpack(endian .. "II", data, dummy_pos)
-      p1 = p1_top / p1_bottom
-      p2 = p2_top / p2_bottom
-      p3 = p3_top / p3_bottom
+      dummy_pos, p1 = decode_value(endian, format, data, value + 8)
+      dummy_pos, p2 = decode_value(endian, format, data, dummy_pos)
+      dummy_pos, p3 = decode_value(endian, format, data, dummy_pos)
 
       if(tag == GPS_TAG_LATITUDE) then
         latitude = (string.format("%0.0fd %0.0fm %0.3fs", p1, p2, p3))
