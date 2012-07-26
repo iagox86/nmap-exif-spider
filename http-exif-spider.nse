@@ -342,11 +342,10 @@ function decode_value(endian, format, data, pos)
   end
 end
 
-function process_gps(data, pos, endian)
+function process_gps(data, pos, endian, result)
   local value, offset
 
   local pos, num_entries = bin.unpack(endian .. "S", data, pos)
-  local results = {}
 
   for i=1, num_entries do
     pos, tag, format, components = bin.unpack(endian .. "SSI", data, pos)
@@ -368,14 +367,14 @@ function process_gps(data, pos, endian)
       dummy_pos, p3 = decode_value(endian, format, data, dummy_pos)
 
       if(tag == GPS_TAG_LATITUDE) then
-        table.insert(results, string.format("Latitude: %0.0fd %0.0fm %0.3fs", p1, p2, p3))
+        table.insert(result, string.format("Latitude: %0.0fd %0.0fm %0.3fs", p1, p2, p3))
       else
-        table.insert(results, string.format("Longitude: %0.0fd %0.0fm %0.3fs", p1, p2, p3))
+        table.insert(result, string.format("Longitude: %0.0fd %0.0fm %0.3fs", p1, p2, p3))
       end
     end
   end
 
-  return true, results
+  return true, result
 end
 
 function parse_exif(s)
@@ -383,6 +382,7 @@ function parse_exif(s)
   local tag, format, components, byte_count, value, offset, dummy, data
   local status, result
 
+  result = {}
   -- Parse the jpeg header, make sure it's valid
   pos, sig = bin.unpack(">S", s, pos)
   if(sig ~= 0xFFD8) then
@@ -440,10 +440,19 @@ function parse_exif(s)
 
     -- We mostly care about GPS_INFO
     if(tag == TAG_GPSINFO) then
-      status, result = process_gps(exif_data, value + 8 - 1, endian)
+      status, result = process_gps(exif_data, value + 8 - 1, endian, result)
       if(not(status)) then
         return false, result
       end
+    elseif(tag == TAG_MAKE) then
+      dummy, value = bin.unpack("z", exif_data, value + 8 - 1)
+      table.insert(result, string.format("Make: %s", value))
+    elseif(tag == TAG_MODEL) then
+      dummy, value = bin.unpack("z", exif_data, value + 8 - 1)
+      table.insert(result, string.format("Model: %s", value))
+    elseif(tag == TAG_DATETIME) then
+      dummy, value = bin.unpack("z", exif_data, value + 8 - 1)
+      table.insert(result, string.format("Date: %s", value))
     end
   end
 
@@ -451,8 +460,14 @@ function parse_exif(s)
 end
 
 function action(host, port)
-  f = io.open("/home/ron/topleft.jpg", "r")
-  a = f:read("*all")
+  ----- BEGIN TEST CODE
+--  f = io.open("/home/ron/Nationalmuseum.jpg", "r")
+--  a = f:read("*all")
+--  local status, result = parse_exif(a)
+--  if(1 == 1) then
+--    return nsedebug.tostr(result)
+--  end
+  ----- END TEST CODE
 
   local pattern = "%.jpg"
   local images = {}
@@ -483,7 +498,9 @@ function action(host, port)
 
     -- Check if we got a response, and the response is a .jpg file
 	  if r.response and r.response.body and r.response.status==200 and (string.match(r.url.path, ".jpg") or string.match(r.url.path, ".jpeg")) then
-      local status, result = parse_exif(r.response.body)
+      local status, result
+      stdnse.print_debug(1, "Attempting to read exif data from %s", r.url.raw)
+      status, result = parse_exif(r.response.body)
 
       -- If there are any exif results, add them to the result
       if(result and #result > 0) then
