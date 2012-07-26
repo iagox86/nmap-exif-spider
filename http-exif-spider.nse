@@ -381,9 +381,7 @@ function parse_exif(s)
 
   pos, exif_data = bin.unpack(string.format(">A%d", size), s, pos)
 
-  nsedebug.print_hex(exif_data)
   local pos, header1, header2, endian = bin.unpack(">ISS", exif_data, 1)
-  print(string.format("%08x %04x", header1, header2))
   if(header1 ~= 0x45786966 or header2 ~= 0x0000) then
     return false, "Invalid EXIF header"
   end
@@ -405,19 +403,15 @@ function parse_exif(s)
 
   -- Start processing a directory
   local pos, num_entries = bin.unpack(endian .. "S", exif_data, pos)
-  print("num_entries = " .. num_entries .. "\n")
 
   for i=1,num_entries do
     pos, tag, format, components = bin.unpack(endian .. "SSI", exif_data, pos)
     byte_count = components * bytes_per_format[format + 1]
 
-    print(string.format("type = %s", TagTable[tag]))
     if(byte_count <= 4) then
       pos, value = bin.unpack(endian .. "I", exif_data, pos)
-      print(string.format("value = %x", value))
     else
       pos, value = bin.unpack(endian .. "I", exif_data, pos)
-      print(string.format("offset = %x", value))
     end
 
     -- We mostly care about GPS_INFO
