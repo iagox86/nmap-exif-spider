@@ -346,7 +346,7 @@ function process_gps(data, pos, endian)
   local value, offset
 
   local pos, num_entries = bin.unpack(endian .. "S", data, pos)
-  local latitude, longitude
+  local results = {}
 
   for i=1, num_entries do
     pos, tag, format, components = bin.unpack(endian .. "SSI", data, pos)
@@ -368,20 +368,20 @@ function process_gps(data, pos, endian)
       dummy_pos, p3 = decode_value(endian, format, data, dummy_pos)
 
       if(tag == GPS_TAG_LATITUDE) then
-        latitude = (string.format("%0.0fd %0.0fm %0.3fs", p1, p2, p3))
+        table.insert(results, string.format("Latitude: %0.0fd %0.0fm %0.3fs", p1, p2, p3))
       else
-        longitude = (string.format("%0.0fd %0.0fm %0.3fs", p1, p2, p3))
+        table.insert(results, string.format("Longitude: %0.0fd %0.0fm %0.3fs", p1, p2, p3))
       end
     end
   end
 
-  return latitude, longitude
+  return true, results
 end
 
 function parse_exif(s)
   local pos, sig, marker, size, exif_data
   local tag, format, components, byte_count, value, offset, dummy, data
-  local latitude, longitude
+  local status, result
 
   -- Parse the jpeg header, make sure it's valid
   pos, sig = bin.unpack(">S", s, pos)
@@ -440,11 +440,14 @@ function parse_exif(s)
 
     -- We mostly care about GPS_INFO
     if(tag == TAG_GPSINFO) then
-      latitude, longitude = process_gps(exif_data, value + 8 - 1, endian)
+      status, result = process_gps(exif_data, value + 8 - 1, endian)
+      if(not(status)) then
+        return false, result
+      end
     end
   end
 
-  return true, latitude, longitude
+  return true, result
 end
 
 function action(host, port)
@@ -453,6 +456,7 @@ function action(host, port)
 
   local pattern = "%.jpg"
   local images = {}
+  local results = {}
 
   -- once we know the pattern we'll be searching for, we can set up the function
   check_response = function(body) return string.find(body, pattern) end
@@ -477,19 +481,18 @@ function action(host, port)
 		  end
 	  end
 
-	  -- first we try rfi on forms
 	  if r.response and r.response.body and r.response.status==200 and string.match(r.url.path, ".jpg") then
-      local status, latitude, longitude = parse_exif(r.response.body)
+      local status, result = parse_exif(r.response.body)
 
-      if(1 == 1) then
-        images[#images + 1] = string.format("%s contains embedded GPS: %s, %s", r.url.path, latitude, longitude)
+      -- Check for an error
+      if(result and #result > 0) then
+        result['name'] = r.url.path
+        table.insert(results, result)
       end
 	  end --if
   end
 
---  return nsedebug.tostr(images)
-  if(#images > 0) then
-    return stdnse.format_output(true, images)
-  end
+  --return nsedebug.tostr(results)
+  return stdnse.format_output(true, results)
 end
 
