@@ -1,12 +1,25 @@
 description = [[
+Spiders a site's images looking for interesting exif data embedded in
+.jpg files. Displays the make and model of the camera, the date the photo was
+taken, and the embedded geotag information.
 ]]
 
 ---
 -- @usage
--- nmap --script http-exif-spider -p80 <host>
+-- nmap --script http-exif-spider -p80,443 <host>
 --
 --
 -- @output
+-- PORT   STATE SERVICE REASON
+-- 80/tcp open  http    syn-ack
+-- | http-exif-spider: 
+-- |   http://www.javaop.com/topleft.jpg
+-- |     Latitude: 49d 56m 28.500s
+-- |     Longitude: 97d 12m 22.279s
+-- |   http://www.javaop.com/Nationalmuseum.jpg
+-- |     Make: Canon
+-- |     Model: Canon PowerShot S100\xB4
+-- |_    Date: 2003:03:29 13:35:40
 --
 
 author = "Ron Bowes"
@@ -21,6 +34,8 @@ local string = require 'string'
 local nsedebug = require 'nsedebug'
 local bin = require 'bin'
 
+-- These definitions are copied/pasted/reformatted from the jhead-2.96 sourcecode
+-- (the code is effectively public domain, but credit where credit's due!)
 TAG_INTEROP_INDEX          = 0x0001
 TAG_INTEROP_VERSION        = 0x0002
 TAG_IMAGE_WIDTH            = 0x0100
@@ -348,12 +363,20 @@ local function process_gps(data, pos, endian, result)
       dummy_pos, p2 = unpack_rational(endian, data, dummy_pos)
       dummy_pos, p3 = unpack_rational(endian, data, dummy_pos)
 
+      p1 = p1 + (p2 / 60) + (p3 / 60 / 60)
+
       if(tag == GPS_TAG_LATITUDE) then
-        table.insert(result, string.format("Latitude: %0.0fd %0.0fm %0.3fs", p1, p2, p3))
+        result['latitude'] = p1
+        table.insert(result, string.format("Latitude: %f", p1))
       else
-        table.insert(result, string.format("Longitude: %0.0fd %0.0fm %0.3fs", p1, p2, p3))
+        result['longitude'] = p1
+        table.insert(result, string.format("Longitude: %f", p1))
       end
     end
+  end
+
+  if(result['latitude'] and result['longitude']) then
+    table.insert(result, string.format("Map: https://maps.google.com/maps?q=%s,%s", result['latitude'], result['longitude']))
   end
 
   return true, result
@@ -443,7 +466,7 @@ end
 
 function action(host, port)
   ----- BEGIN TEST CODE
-  f = io.open("/home/ron/Nationalmuseum.jpg", "r")
+--  f = io.open("/home/ron/Nationalmuseum.jpg", "r")
   f = io.open("/home/ron/topleft.jpg", "r")
   a = f:read("*all")
   local status, result = parse_exif(a)
