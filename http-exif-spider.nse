@@ -318,7 +318,7 @@ bytes_per_format = {0,1,1,2,4,8,1,1,2,4,8,4,8}
 
 portrule = shortport.http
 
-function decode_value(endian, format, data, pos)
+local function decode_value(endian, format, data, pos)
   local value, value2
   if(format == FMT_SBYTE or format == FMT_BYTE) then
     pos, value = bin.unpack(endian .. "C", data, pos)
@@ -342,7 +342,7 @@ function decode_value(endian, format, data, pos)
   end
 end
 
-function process_gps(data, pos, endian, result)
+local function process_gps(data, pos, endian, result)
   local value, offset
 
   local pos, num_entries = bin.unpack(endian .. "S", data, pos)
@@ -377,7 +377,7 @@ function process_gps(data, pos, endian, result)
   return true, result
 end
 
-function parse_exif(s)
+local function parse_exif(s)
   local pos, sig, marker, size, exif_data
   local tag, format, components, byte_count, value, offset, dummy, data
   local status, result
