@@ -340,7 +340,7 @@ local function unpack_rational(endian, data, pos)
 end
 
 local function process_gps(data, pos, endian, result)
-  local value, offset
+  local value, offset, latitude, latitude_ref, longitude, longitude_ref
 
   local pos, num_entries = bin.unpack(endian .. "S", data, pos)
 
@@ -366,17 +366,27 @@ local function process_gps(data, pos, endian, result)
       p1 = p1 + (p2 / 60) + (p3 / 60 / 60)
 
       if(tag == GPS_TAG_LATITUDE) then
-        result['latitude'] = p1
-        table.insert(result, string.format("Latitude: %f", p1))
+        latitude = p1
       else
-        result['longitude'] = p1
-        table.insert(result, string.format("Longitude: %f", p1))
+        longitude = p1
       end
+    elseif(tag == GPS_TAG_LATITUDEREF) then
+      latitude_ref = string.char(bit.rshift(value, 24))
+    elseif(tag == GPS_TAG_LONGITUDEREF) then
+      longitude_ref = string.char(bit.rshift(value, 24))
     end
   end
 
-  if(result['latitude'] and result['longitude']) then
-    table.insert(result, string.format("Map: https://maps.google.com/maps?q=%s,%s", result['latitude'], result['longitude']))
+  if(latitude and longitude) then
+    -- Normalize the N/S/E/W to positive and negative
+    if(latitude_ref == 'S') then
+      latitude = -latitude
+    end
+    if(longitude_ref == 'W') then
+      longitude = -longitude
+    end
+
+    table.insert(result, string.format("GPS: %f,%f - https://maps.google.com/maps?q=%s,%s", latitude, longitude, latitude, longitude))
   end
 
   return true, result
