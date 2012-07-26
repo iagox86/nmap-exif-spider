@@ -468,28 +468,29 @@ function action(host, port)
 		return
 	end
 
-	local return_table = {}
-
 	while(true) do
+    -- Begin the crawler
 	  local status, r = crawler:crawl()
 
+    -- Make sure there's no error
 	  if ( not(status) ) then
 		  if ( r.err ) then
-			  return stdnse.format_output(true, ("ERROR: %s"):format(r.reason))
+			  return stdnse.format_output(false, r.reason)
 		  else
 			  break
 		  end
 	  end
 
-	  if r.response and r.response.body and r.response.status==200 and string.match(r.url.path, ".jpg") then
+    -- Check if we got a response, and the response is a .jpg file
+	  if r.response and r.response.body and r.response.status==200 and (string.match(r.url.path, ".jpg") or string.match(r.url.path, ".jpeg")) then
       local status, result = parse_exif(r.response.body)
 
-      -- Check for an error
+      -- If there are any exif results, add them to the result
       if(result and #result > 0) then
         result['name'] = r.url.raw
         table.insert(results, result)
       end
-	  end --if
+	  end
   end
 
   --return nsedebug.tostr(results)
