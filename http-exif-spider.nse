@@ -12,14 +12,13 @@ taken, and the embedded geotag information.
 -- @output
 -- PORT   STATE SERVICE REASON
 -- 80/tcp open  http    syn-ack
--- | http-exif-spider: 
--- |   http://www.javaop.com/topleft.jpg
--- |     Latitude: 49d 56m 28.500s
--- |     Longitude: 97d 12m 22.279s
+-- | http-exif-spider:
 -- |   http://www.javaop.com/Nationalmuseum.jpg
 -- |     Make: Canon
 -- |     Model: Canon PowerShot S100\xB4
--- |_    Date: 2003:03:29 13:35:40
+-- |     Date: 2003:03:29 13:35:40
+-- |   http://www.javaop.com/topleft.jpg
+-- |_    GPS: 49.941250,-97.206189 - https://maps.google.com/maps?q=49.94125,-97.20618863493
 --
 
 author = "Ron Bowes"
@@ -31,7 +30,6 @@ local http = require 'http'
 local stdnse = require 'stdnse'
 local httpspider = require 'httpspider'
 local string = require 'string'
-local nsedebug = require 'nsedebug'
 local bin = require 'bin'
 
 -- These definitions are copied/pasted/reformatted from the jhead-2.96 sourcecode
@@ -333,6 +331,10 @@ bytes_per_format = {0,1,1,2,4,8,1,1,2,4,8,4,8}
 
 portrule = shortport.http
 
+---Unpack a rational number from exif. In exif, a rational number is stored
+--as a pair of integers - the numerator and the denominator. 
+--
+--@return the new position, and the value. 
 local function unpack_rational(endian, data, pos)
   local v1, v2
   pos, v1, v2 = bin.unpack(endian .. "II", data, pos)
@@ -340,39 +342,34 @@ local function unpack_rational(endian, data, pos)
 end
 
 local function process_gps(data, pos, endian, result)
-  local value, offset, latitude, latitude_ref, longitude, longitude_ref
+  local value, num_entries
+  local latitude, latitude_ref, longitude, longitude_ref
 
-  local pos, num_entries = bin.unpack(endian .. "S", data, pos)
+  -- The first entry in the gps section is a 16-bit size
+  pos, num_entries = bin.unpack(endian .. "S", data, pos)
 
+  -- Loop through the entries to find the fun stuff
   for i=1, num_entries do
-    pos, tag, format, components = bin.unpack(endian .. "SSI", data, pos)
-    local GpsTag = GpsTagTable[tag]
-
-    local component_size = bytes_per_format[format + 1]
-    local byte_count = components * component_size
-
-    if(byte_count > 4) then
-      pos, value  = bin.unpack(endian .. "I", data, pos)
-    else
-      pos, value = bin.unpack(endian .. "I", data, pos)
-    end
+    pos, tag, format, components, value = bin.unpack(endian .. "SSII", data, pos)
 
     if(tag == GPS_TAG_LATITUDE or tag == GPS_TAG_LONGITUDE) then
-      local dummy_pos, p1, p2, p3
-      dummy_pos, p1 = unpack_rational(endian, data, value + 8)
-      dummy_pos, p2 = unpack_rational(endian, data, dummy_pos)
-      dummy_pos, p3 = unpack_rational(endian, data, dummy_pos)
+      local dummy, gps, h, m, s
+      dummy, h = unpack_rational(endian, data, value + 8)
+      dummy, m = unpack_rational(endian, data, dummy)
+      dummy, s = unpack_rational(endian, data, dummy)
 
-      p1 = p1 + (p2 / 60) + (p3 / 60 / 60)
+      gps = h + (m / 60) + (s / 60 / 60)
 
       if(tag == GPS_TAG_LATITUDE) then
-        latitude = p1
+        latitude = gps
       else
-        longitude = p1
+        longitude = gps
       end
     elseif(tag == GPS_TAG_LATITUDEREF) then
+      -- Get the first byte in the latitude reference as a character
       latitude_ref = string.char(bit.rshift(value, 24))
     elseif(tag == GPS_TAG_LONGITUDEREF) then
+      -- Get the first byte in the longitude reference as a character
       longitude_ref = string.char(bit.rshift(value, 24))
     end
   end
@@ -392,69 +389,53 @@ local function process_gps(data, pos, endian, result)
   return true, result
 end
 
-local function parse_exif(s)
-  local pos, sig, marker, size, exif_data
+---Parse the exif data section and return a table. This has only been tested
+--in a .jpeg file, but should work for .tiff as well.
+local function parse_exif(exif_data)
+  local sig, marker, size
   local tag, format, components, byte_count, value, offset, dummy, data
   local status, result
+  local header1, header2, tiff_header_1, first_offset
 
+  -- Initialize the result table
   result = {}
-  -- Parse the jpeg header, make sure it's valid
-  pos, sig = bin.unpack(">S", s, pos)
-  if(sig ~= 0xFFD8) then
-    return false, "Unexpected signature"
-  end
 
-  -- Parse the sections
-  while(true) do
-    pos, marker, size = bin.unpack(">SS", s, pos)
-
-    -- Check if we found the exif metadata section
-    if(marker == 0xffe1) then
-      break
-    elseif(not(marker)) then
-      return false, "Could not found EXIF marker"
-    end
-
-    pos = pos + size - 2 -- -2 for the marker size
-  end
-
-  pos, exif_data = bin.unpack(string.format(">A%d", size), s, pos)
-
-  local pos, header1, header2, endian = bin.unpack(">ISS", exif_data, 1)
+  -- Read the verify the EXIF header
+  pos, header1, header2, endian = bin.unpack(">ISS", exif_data, 1)
   if(header1 ~= 0x45786966 or header2 ~= 0x0000) then
     return false, "Invalid EXIF header"
   end
 
+  -- Check the endianness - it should only ever be big endian, but it doesn't
+  -- hurt to check
   if(endian == 0x4d4d) then
     endian = ">"
   elseif(endian == 0x4949) then
     endian = "<"
   else
-    return false, "Unrecognized endianness"
+    return false, "Unrecognized endianness entry"
   end
 
-  local pos, tiff_header_1, first_offset = bin.unpack(endian .. "SI", exif_data, pos)
+  -- Read the first tiff header and the offset to the first data entry (should be 8)
+  pos, tiff_header_1, first_offset = bin.unpack(endian .. "SI", exif_data, pos)
   if(tiff_header_1 ~= 0x002A or first_offset ~= 0x00000008) then
     return false, "Invalid tiff header"
   end
 
-  pos = first_offset + 8 - 1 -- -1 because of lua's 1-based indexing
+  -- Skip over the header, and go to the first offset (subtracting 1 because lua)
+  pos = first_offset + 8 - 1
 
-  -- Start processing a directory
+  -- The first 16-bit value is the number of entries
   local pos, num_entries = bin.unpack(endian .. "S", exif_data, pos)
 
+  -- Loop through the entries
   for i=1,num_entries do
-    pos, tag, format, components = bin.unpack(endian .. "SSI", exif_data, pos)
-    byte_count = components * bytes_per_format[format + 1]
+    -- Read the entry's header
+    pos, tag, format, components, value = bin.unpack(endian .. "SSII", exif_data, pos)
 
-    if(byte_count <= 4) then
-      pos, value = bin.unpack(endian .. "I", exif_data, pos)
-    else
-      pos, value = bin.unpack(endian .. "I", exif_data, pos)
-    end
-
-    -- We mostly care about GPS_INFO
+    -- Look at the tags we care about
     if(tag == TAG_GPSINFO) then
+      -- If it's a GPSINFO tag, we need to parse the GPS structure
       status, result = process_gps(exif_data, value + 8 - 1, endian, result)
       if(not(status)) then
         return false, result
@@ -474,17 +455,39 @@ local function parse_exif(s)
   return true, result
 end
 
-function action(host, port)
-  ----- BEGIN TEST CODE
---  f = io.open("/home/ron/Nationalmuseum.jpg", "r")
-  f = io.open("/home/ron/topleft.jpg", "r")
-  a = f:read("*all")
-  local status, result = parse_exif(a)
-  if(1 == 1) then
-    return stdnse.format_output(true, result)
-  end
-  ----- END TEST CODE
+---Parse a jpeg and find the EXIF data section
+local function parse_jpeg(s)
+  local pos, sig, marker, size, exif_data
 
+  -- Parse the jpeg header, make sure it's valid (we expect 0xFFD8)
+  pos, sig = bin.unpack(">S", s, pos)
+  if(sig ~= 0xFFD8) then
+    return false, "Unexpected signature"
+  end
+
+  -- Parse the sections to find the exif marker (0xffe1)
+  while(true) do
+    pos, marker, size = bin.unpack(">SS", s, pos)
+
+    -- Check if we found the exif metadata section, break if we did
+    if(marker == 0xffe1) then
+      break
+    -- If the marker is nil, we're off the end of the image (and therefore, it wasn't found)
+    elseif(not(marker)) then
+      return false, "Could not found EXIF marker"
+    end
+
+    -- Go to the next section (we subtract 2 because of the 2-byte marker we read)
+    pos = pos + size - 2
+  end
+
+  pos, exif_data = bin.unpack(string.format(">A%d", size), s, pos)
+
+  return parse_exif(exif_data)
+end
+
+
+function action(host, port)
   local pattern = "%.jpg"
   local images = {}
   local results = {}
@@ -516,7 +519,7 @@ function action(host, port)
 	  if r.response and r.response.body and r.response.status==200 and (string.match(r.url.path, ".jpg") or string.match(r.url.path, ".jpeg")) then
       local status, result
       stdnse.print_debug(1, "Attempting to read exif data from %s", r.url.raw)
-      status, result = parse_exif(r.response.body)
+      status, result = parse_jpeg(r.response.body)
 
       -- If there are any exif results, add them to the result
       if(result and #result > 0) then
