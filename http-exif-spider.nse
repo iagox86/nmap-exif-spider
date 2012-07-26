@@ -318,28 +318,10 @@ bytes_per_format = {0,1,1,2,4,8,1,1,2,4,8,4,8}
 
 portrule = shortport.http
 
-local function decode_value(endian, format, data, pos)
-  local value, value2
-  if(format == FMT_SBYTE or format == FMT_BYTE) then
-    pos, value = bin.unpack(endian .. "C", data, pos)
-    return pos, value
-  elseif(format == FMT_USHORT) then
-    pos, value = bin.unpack(endian .. "S", data, pos)
-    return pos, value
-  elseif(format == FMT_ULONG or format == FMT_SLONG) then
-    pos, value = bin.unpack(endian .. "I", data, pos)
-    return pos, value
-  elseif(format == FMT_SSHORT) then
-    pos, value = bin.unpack(endian .. "S", data, pos)
-    return pos, value
-  elseif(format == FMT_URATIONAL or format == FMT_SRATIONAL) then
-    pos, value, value2 = bin.unpack(endian .. "II", data, pos)
-    return pos, value / value2
-  elseif(format == FMT_SINGLE or format == FMT_DOUBLE) then
-    -- TODO
-    stdnse.print_debug(1, "Not supported!")
-    os.exit()
-  end
+local function unpack_rational(endian, data, pos)
+  local v1, v2
+  pos, v1, v2 = bin.unpack(endian .. "II", data, pos)
+  return pos, v1 / v2
 end
 
 local function process_gps(data, pos, endian, result)
@@ -361,10 +343,10 @@ local function process_gps(data, pos, endian, result)
     end
 
     if(tag == GPS_TAG_LATITUDE or tag == GPS_TAG_LONGITUDE) then
-      local dummy_pos, p1, p2, p3, p1_top, p1_bottom, p2_top, p2_bottom, p3_top, p3_bottom
-      dummy_pos, p1 = decode_value(endian, format, data, value + 8)
-      dummy_pos, p2 = decode_value(endian, format, data, dummy_pos)
-      dummy_pos, p3 = decode_value(endian, format, data, dummy_pos)
+      local dummy_pos, p1, p2, p3
+      dummy_pos, p1 = unpack_rational(endian, data, value + 8)
+      dummy_pos, p2 = unpack_rational(endian, data, dummy_pos)
+      dummy_pos, p3 = unpack_rational(endian, data, dummy_pos)
 
       if(tag == GPS_TAG_LATITUDE) then
         table.insert(result, string.format("Latitude: %0.0fd %0.0fm %0.3fs", p1, p2, p3))
@@ -461,12 +443,13 @@ end
 
 function action(host, port)
   ----- BEGIN TEST CODE
---  f = io.open("/home/ron/Nationalmuseum.jpg", "r")
---  a = f:read("*all")
---  local status, result = parse_exif(a)
---  if(1 == 1) then
---    return nsedebug.tostr(result)
---  end
+  f = io.open("/home/ron/Nationalmuseum.jpg", "r")
+  f = io.open("/home/ron/topleft.jpg", "r")
+  a = f:read("*all")
+  local status, result = parse_exif(a)
+  if(1 == 1) then
+    return stdnse.format_output(true, result)
+  end
   ----- END TEST CODE
 
   local pattern = "%.jpg"
