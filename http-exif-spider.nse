@@ -486,7 +486,7 @@ function action(host, port)
 
       -- Check for an error
       if(result and #result > 0) then
-        result['name'] = r.url.path
+        result['name'] = r.url.raw
         table.insert(results, result)
       end
 	  end --if
